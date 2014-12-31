@@ -13,6 +13,7 @@ use self::InAddr::*;
 
 use alloc::arc::Arc;
 use libc::{mod, c_char, c_int};
+use c_str::CString;
 use mem;
 use num::Int;
 use ptr::{mod, null, null_mut};
@@ -22,7 +23,9 @@ use io::{IoResult, IoError};
 use sys::{mod, retry, c, sock_t, last_error, last_net_error, last_gai_error, close_sock,
           wrlen, msglen_t, os, wouldblock, set_nonblocking, timer, ms_to_timeval,
           decode_error_detailed};
-use sync::{Mutex, MutexGuard};
+use sync::Mutex;
+#[cfg(not(target_os = "linux"))]
+use sync::MutexGuard;
 use sys_common::{mod, keep_going, short_write, timeout};
 use prelude::*;
 use cmp;
@@ -288,6 +291,43 @@ pub fn get_host_addresses(host: Option<&str>, servname: Option<&str>,
     unsafe { freeaddrinfo(res); }
 
     Ok(addrs)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// get_address_name
+////////////////////////////////////////////////////////////////////////////////
+
+extern "system" {
+    fn getnameinfo(sa: *const libc::sockaddr, salen: libc::socklen_t,
+        host: *mut c_char, hostlen: libc::size_t,
+        serv: *mut c_char, servlen: libc::size_t,
+        flags: c_int) -> c_int;
+}
+
+const NI_MAXHOST: uint = 1025;
+
+pub fn get_address_name(addr: IpAddr) -> Result<String, IoError> {
+    let addr = SocketAddr{ip: addr, port: 0};
+
+    let mut storage: libc::sockaddr_storage = unsafe { mem::zeroed() };
+    let len = addr_to_sockaddr(addr, &mut storage);
+
+    let mut hostbuf = [0 as c_char, ..NI_MAXHOST];
+
+    let res = unsafe {
+        getnameinfo(&storage as *const _ as *const libc::sockaddr, len,
+            hostbuf.as_mut_ptr(), NI_MAXHOST as libc::size_t,
+            ptr::null_mut(), 0,
+            0)
+    };
+
+    if res != 0 {
+        return Err(last_gai_error(res));
+    }
+
+    unsafe {
+        Ok(CString::new(hostbuf.as_ptr(), false).as_str().unwrap().to_string())
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -573,11 +613,13 @@ impl Drop for Inner {
     fn drop(&mut self) { unsafe { close_sock(self.fd); } }
 }
 
+#[cfg(not(target_os = "linux"))]
 pub struct Guard<'a> {
     pub fd: sock_t,
     pub guard: MutexGuard<'a, ()>,
 }
 
+#[cfg(not(target_os = "linux"))]
 #[unsafe_destructor]
 impl<'a> Drop for Guard<'a> {
     fn drop(&mut self) {

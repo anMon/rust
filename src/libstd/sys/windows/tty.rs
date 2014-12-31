@@ -26,7 +26,6 @@
 //! to working in raw UTF-16, with such a wrapper around it.
 
 use super::c::{ReadConsoleW, WriteConsoleW, GetConsoleMode, SetConsoleMode};
-use super::c::{ERROR_ILLEGAL_CHARACTER};
 use super::c::{ENABLE_ECHO_INPUT, ENABLE_EXTENDED_FLAGS};
 use super::c::{ENABLE_INSERT_MODE, ENABLE_LINE_INPUT};
 use super::c::{ENABLE_PROCESSED_INPUT, ENABLE_QUICK_EDIT_MODE};
@@ -34,9 +33,12 @@ use libc::{c_int, HANDLE, LPDWORD, DWORD, LPVOID};
 use libc::{get_osfhandle, CloseHandle};
 use libc::types::os::arch::extra::LPCVOID;
 use io::{mod, IoError, IoResult, MemReader};
+use iter::repeat;
 use prelude::*;
 use ptr;
 use str::from_utf8;
+
+use sys_common::unimpl;
 
 fn invalid_encoding() -> IoError {
     IoError {
@@ -89,7 +91,7 @@ impl TTY {
     pub fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
         // Read more if the buffer is empty
         if self.utf8.eof() {
-            let mut utf16 = Vec::from_elem(0x1000, 0u16);
+            let mut utf16: Vec<u16> = repeat(0u16).take(0x1000).collect();
             let mut num: DWORD = 0;
             match unsafe { ReadConsoleW(self.handle,
                                          utf16.as_mut_ptr() as LPVOID,
@@ -149,11 +151,8 @@ impl TTY {
         // Make a CONSOLE_SCREEN_BUFFER_INFO
         // Call GetConsoleScreenBufferInfo
         // Maybe call GetLargestConsoleWindowSize instead?
-        Err(super::unimpl())
+        Err(unimpl())
     }
-
-    // Let us magically declare this as a TTY
-    pub fn isatty(&self) -> bool { true }
 }
 
 impl Drop for TTY {

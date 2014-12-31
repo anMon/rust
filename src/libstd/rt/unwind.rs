@@ -68,7 +68,7 @@ use intrinsics;
 use libc::c_void;
 use mem;
 use sync::atomic;
-use sync::{Once, ONCE_INIT};
+use sys_common::mutex::{Mutex, MUTEX_INIT};
 
 use rt::libunwind as uw;
 
@@ -477,8 +477,6 @@ pub mod eabi {
     }
 }
 
-// NOTE(stage0): Remove cfg after a snapshot
-#[cfg(not(stage0))]
 #[cfg(not(test))]
 /// Entry point of panic from the libcore crate.
 #[lang = "panic_fmt"]
@@ -487,18 +485,6 @@ pub extern fn rust_begin_unwind(msg: fmt::Arguments,
     begin_unwind_fmt(msg, &(file, line))
 }
 
-// NOTE(stage0): Remove function after a snapshot
-#[cfg(stage0)]
-#[cfg(not(test))]
-/// Entry point of panic from the libcore crate.
-#[lang = "panic_fmt"]
-pub extern fn rust_begin_unwind(msg: &fmt::Arguments,
-                                file: &'static str, line: uint) -> ! {
-    begin_unwind_fmt(msg, &(file, line))
-}
-
-// NOTE(stage0): Remove cfg after a snapshot
-#[cfg(not(stage0))]
 /// The entry point for unwinding with a formatted message.
 ///
 /// This is designed to reduce the amount of code required at the call
@@ -507,39 +493,6 @@ pub extern fn rust_begin_unwind(msg: &fmt::Arguments,
 /// the actual formatting into this shared place.
 #[inline(never)] #[cold]
 pub fn begin_unwind_fmt(msg: fmt::Arguments, file_line: &(&'static str, uint)) -> ! {
-    use fmt::FormatWriter;
-
-    // We do two allocations here, unfortunately. But (a) they're
-    // required with the current scheme, and (b) we don't handle
-    // panic + OOM properly anyway (see comment in begin_unwind
-    // below).
-
-    struct VecWriter<'a> { v: &'a mut Vec<u8> }
-
-    impl<'a> fmt::FormatWriter for VecWriter<'a> {
-        fn write(&mut self, buf: &[u8]) -> fmt::Result {
-            self.v.push_all(buf);
-            Ok(())
-        }
-    }
-
-    let mut v = Vec::new();
-    let _ = write!(&mut VecWriter { v: &mut v }, "{}", msg);
-
-    let msg = box String::from_utf8_lossy(v.as_slice()).into_owned();
-    begin_unwind_inner(msg, file_line)
-}
-
-// NOTE(stage0): Remove function after a snapshot
-#[cfg(stage0)]
-/// The entry point for unwinding with a formatted message.
-///
-/// This is designed to reduce the amount of code required at the call
-/// site as much as possible (so that `panic!()` has as low an impact
-/// on (e.g.) the inlining of other functions as possible), by moving
-/// the actual formatting into this shared place.
-#[inline(never)] #[cold]
-pub fn begin_unwind_fmt(msg: &fmt::Arguments, file_line: &(&'static str, uint)) -> ! {
     use fmt::FormatWriter;
 
     // We do two allocations here, unfortunately. But (a) they're
@@ -587,11 +540,20 @@ pub fn begin_unwind<M: Any + Send>(msg: M, file_line: &(&'static str, uint)) -> 
 /// Doing this split took the LLVM IR line counts of `fn main() { panic!()
 /// }` from ~1900/3700 (-O/no opts) to 180/590.
 #[inline(never)] #[cold] // this is the slow path, please never inline this
-fn begin_unwind_inner(msg: Box<Any + Send>, file_line: &(&'static str, uint)) -> ! {
+fn begin_unwind_inner(msg: Box<Any + Send>,
+                      file_line: &(&'static str, uint)) -> ! {
     // Make sure the default failure handler is registered before we look at the
     // callbacks.
-    static INIT: Once = ONCE_INIT;
-    INIT.doit(|| unsafe { register(failure::on_fail); });
+    unsafe {
+        static LOCK: Mutex = MUTEX_INIT;
+        static mut INIT: bool = false;
+        LOCK.lock();
+        if !INIT {
+            register(failure::on_fail);
+            INIT = true;
+        }
+        LOCK.unlock();
+    }
 
     // First, invoke call the user-defined callbacks triggered on thread panic.
     //

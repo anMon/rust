@@ -10,29 +10,13 @@
 
 #![allow(missing_docs)]
 #![allow(non_camel_case_types)]
-#![allow(unused_imports)]
-#![allow(dead_code)]
-#![allow(unused_unsafe)]
-#![allow(unused_mut)]
 
 extern crate libc;
 
-use num;
 use num::{Int, SignedInt};
 use prelude::*;
 use io::{mod, IoResult, IoError};
 use sys_common::mkerr_libc;
-
-macro_rules! helper_init { (static $name:ident: Helper<$m:ty>) => (
-    static $name: Helper<$m> = Helper {
-        lock: ::sync::MUTEX_INIT,
-        cond: ::sync::CONDVAR_INIT,
-        chan: ::cell::UnsafeCell { value: 0 as *mut Sender<$m> },
-        signal: ::cell::UnsafeCell { value: 0 },
-        initialized: ::cell::UnsafeCell { value: false },
-        shutdown: ::cell::UnsafeCell { value: false },
-    };
-) }
 
 pub mod backtrace;
 pub mod c;
@@ -56,6 +40,7 @@ pub mod udp;
 
 pub mod addrinfo {
     pub use sys_common::net::get_host_addresses;
+    pub use sys_common::net::get_address_name;
 }
 
 // FIXME: move these to c module
